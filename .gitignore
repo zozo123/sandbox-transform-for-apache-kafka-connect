@@ -1,0 +1,6 @@
+build/
+.gradle/
+.gradle-home/
+examples/redact-rs/target/
+examples/redact-rs/.cargo-home/
+*.wasm
