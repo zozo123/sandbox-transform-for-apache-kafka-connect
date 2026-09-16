@@ -27,6 +27,7 @@ import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.header.ConnectHeaders;
 import org.apache.kafka.connect.source.SourceConnector;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
@@ -41,6 +42,20 @@ public final class PaymentsSourceConnector extends SourceConnector {
     static final int RECORDS = 5;
     static final String CARD = "4111111111111111";
     static final String MASKED = "************1111";
+
+    /**
+     * Record identity the transform has to carry through untouched.
+     *
+     * <p>{@code apply()} rebuilds each record with {@code record.key()} and
+     * {@code record.headers()}. For a redaction transform the key is what compaction and
+     * partitioning depend on, and headers are where lineage and trace context live -- so dropping
+     * either would be a serious regression that every value-only assertion in this suite would
+     * still call a pass.
+     */
+    static final String KEY_PREFIX = "acct-";
+    static final String TRACE_HEADER = "trace-id";
+    static final String ORIGIN_HEADER = "origin";
+    static final String ORIGIN_VALUE = "payments-source";
 
     @Override
     public void start(final Map<String, String> props) {
@@ -105,7 +120,19 @@ public final class PaymentsSourceConnector extends SourceConnector {
                 .put("card", CARD)
                 .put("amount", 1299)
                 .put("internal", internal);
-            batch.add(new SourceRecord(partition, offset, topic, VALUE_SCHEMA, value));
+
+            // A key and headers on every record, so the suite can tell a transform that masks the
+            // value from one that masks the value and quietly loses everything else.
+            final String key = KEY_PREFIX + produced;
+            final ConnectHeaders headers = new ConnectHeaders();
+            headers.addString(TRACE_HEADER, "trace-" + produced);
+            headers.addString(ORIGIN_HEADER, ORIGIN_VALUE);
+
+            batch.add(new SourceRecord(
+                partition, offset, topic, null,
+                Schema.STRING_SCHEMA, key,
+                VALUE_SCHEMA, value,
+                null, headers));
             produced++;
             return batch;
         }
