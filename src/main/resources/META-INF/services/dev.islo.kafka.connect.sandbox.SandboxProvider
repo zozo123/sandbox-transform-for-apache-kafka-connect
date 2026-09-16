@@ -1,0 +1,4 @@
+dev.islo.kafka.connect.sandbox.provider.WasmSandboxProvider
+dev.islo.kafka.connect.sandbox.provider.DockerSandboxProvider$MicroVm
+dev.islo.kafka.connect.sandbox.provider.DockerSandboxProvider$Container
+dev.islo.kafka.connect.sandbox.provider.SubprocessSandboxProvider
