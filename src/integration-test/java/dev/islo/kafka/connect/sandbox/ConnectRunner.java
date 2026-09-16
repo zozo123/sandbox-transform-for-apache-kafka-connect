@@ -71,6 +71,12 @@ final class ConnectRunner {
         // The transform is discovered the way an operator would install it: as a plugin
         // directory, loaded by Connect's own plugin classloader.
         workerProps.put("plugin.path", pluginDir.getPath());
+        // 3.8.1 defaults to hybrid_warn, which falls back to classpath scanning and merely logs
+        // when a plugin has no ServiceLoader manifest. Demanding hybrid_fail makes this test
+        // additionally prove that META-INF/services is complete and loadable from the plugin
+        // classloader -- the packaging, not just the code. KIP-898 proposes service_load as the
+        // default in a later release, so this is also the forward-compatibility check.
+        workerProps.put("plugin.discovery", "hybrid_fail");
 
         final Plugins plugins = new Plugins(workerProps);
         final StandaloneConfig config = new StandaloneConfig(workerProps);
