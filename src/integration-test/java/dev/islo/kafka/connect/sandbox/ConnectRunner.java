@@ -1,5 +1,9 @@
 /*
+ * Copyright 2019 Aiven Oy
  * Copyright 2026 Yossi Eliaz
+ *
+ * This file is derived from ConnectRunner.java in
+ * Aiven-Open/transforms-for-apache-kafka-connect (Apache-2.0) and has been modified.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

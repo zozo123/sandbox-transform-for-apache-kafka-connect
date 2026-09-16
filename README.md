@@ -14,6 +14,27 @@ transforms.redact.sandbox.provider=wasm
 transforms.redact.sandbox.module=/opt/transforms/redact.wasm
 ```
 
+## What this is, and what it is not
+
+**It is** a way to supply a transform as configuration. A `.wasm` path in the connector config,
+written in any language that compiles to WebAssembly, deployed without a JAR, a `plugin.path`
+change, or a worker restart.
+
+**It is not** a fix for a security hole, and it should not be read as one. Apache Kafka's position
+is explicit: transforms "execute in the worker JVM with its privileges. Install only plugins you
+trust," and distrusting tenants get separate Connect clusters. That is a deliberate, documented
+trust boundary with a free operational remedy, and this project does not change it. This plugin's
+own JAR runs with worker privileges exactly as any other plugin does.
+
+What changes is the *guest*. It runs behind a boundary instead of as privileged Java on the class
+path, which is what makes "take the transform as configuration" a reasonable shape rather than a
+way of handing the worker to whoever wrote the config. The strength of that boundary is a property
+of the provider you choose, declared per provider in `SandboxCapabilities` rather than claimed once
+for the project.
+
+The prior art is Redpanda, which ships WebAssembly data transforms for brokers. Wasm is what a
+managed service can accept from a customer. Kafka Connect has no equivalent.
+
 ## The abstraction is the point
 
 ```
@@ -200,12 +221,16 @@ build container, so the broker has to advertise a name that resolves from there,
 ## Honest limitations
 
 - **`wasm` cannot bound CPU.** A guest looping forever holds the task thread, and a Java thread
-  cannot be safely killed. Chicory's only hook is interpreter-only and experimental. Use `sbx` for
-  code you did not compile.
+  cannot be safely killed. Chicory's only hook is interpreter-only and experimental. `sbx` is the
+  only provider here that can cap a runaway guest, because the VM has its own scheduler — but it
+  has not been tested against an adversarial guest, and nothing here should be read as a
+  recommendation for running code you have reason to distrust.
 - **The Docker providers need an engine.** They shell out to `docker`, so the worker must be able
   to reach a Docker socket — which containerised Connect deployments will not grant. They are
-  development and evaluation providers, and they cannot run in this project's CI (GitHub runners
-  offer no nested virtualisation).
+  development and evaluation providers. `container` *could* run on a GitHub-hosted runner (the
+  integration step already uses the ambient Docker socket via Testcontainers); it is simply not
+  wired into CI yet. `microvm` cannot: it needs Docker Sandboxes' engine, which is not installable
+  there.
 - **`DockerSandboxIT` is skipped** unless a Docker Sandboxes engine socket is reachable. The
   command sequence it issues is verified by hand on the host; the test itself cannot run inside a
   containerised build on macOS, where unix sockets do not cross the VM boundary.

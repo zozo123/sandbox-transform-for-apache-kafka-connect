@@ -90,4 +90,33 @@ class WasmSandboxTest {
             .isInstanceOf(SandboxException.class)
             .hasMessageContaining("sandbox.module");
     }
+
+    @Test
+    void anOutOfRangeResponseIsRejectedRatherThanSizingAHostBuffer(@TempDir final Path dir)
+        throws IOException {
+        // A length close to Integer.MAX_VALUE would make the host allocate ~2GB on the guest's
+        // say-so. The failure would be an OutOfMemoryError, which is an Error and not a
+        // ChicoryException, so it would bypass the trap handling and SandboxException alike and
+        // damage more than the task that caused it. Validate the pair against live memory first.
+        final Path module =
+            WasmGuests.returningOutOfRange(dir, "huge", 0, Integer.MAX_VALUE - 8);
+
+        try (WasmSandbox runtime = new WasmSandbox(module.toString(), 64)) {
+            assertThatThrownBy(() -> runtime.call("{}".getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(SandboxException.class)
+                .hasMessageContaining("out-of-range");
+        }
+    }
+
+    @Test
+    void aPointerPastTheEndOfGuestMemoryIsRejected(@TempDir final Path dir) throws IOException {
+        // One page is 64KiB; point just past it with a plausible length.
+        final Path module = WasmGuests.returningOutOfRange(dir, "past-end", 65_536, 16);
+
+        try (WasmSandbox runtime = new WasmSandbox(module.toString(), 64)) {
+            assertThatThrownBy(() -> runtime.call("{}".getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(SandboxException.class)
+                .hasMessageContaining("out-of-range");
+        }
+    }
 }

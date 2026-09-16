@@ -72,7 +72,7 @@ class SandboxTransformTest {
     }
 
     @Test
-    void anErrorResponseBecomesADataExceptionSoConnectCanRouteItToADlq(@TempDir final Path dir)
+    void anErrorResponseBecomesADataExceptionRatherThanFailingTheBoundary(@TempDir final Path dir)
         throws IOException {
         final Path module = WasmGuests.returning(dir, "bad", "{\"error\":\"unsupported schema\"}");
         try (SandboxTransform<SinkRecord> transform = new SandboxTransform<>()) {

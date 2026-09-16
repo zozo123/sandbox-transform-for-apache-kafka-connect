@@ -155,8 +155,17 @@ public class WasmSandbox implements Sandbox {
             final long packed = transform.apply(inPtr, request.length)[0];
             final int outPtr = (int) (packed >>> 32);
             final int outLen = (int) (packed & 0xFFFFFFFFL);
-            if (outLen < 0) {
-                throw new SandboxException("Wasm guest returned a negative response length");
+
+            // Validate the pair against the guest's live memory before reading it. Both halves
+            // are entirely guest-controlled, and readBytes would otherwise size a host array from
+            // them: a guest returning a length near 2^31 makes the worker attempt a 2GB
+            // allocation. That fails with an OutOfMemoryError, which is an Error rather than a
+            // ChicoryException, so it escapes the catch below, escapes SandboxException, and
+            // takes down more than this task -- the one failure mode a sandbox must not have.
+            final long memoryBytes = (long) memory.pages() * Memory.PAGE_SIZE;
+            if (outPtr < 0 || outLen < 0 || (long) outPtr + outLen > memoryBytes) {
+                throw new SandboxException("Wasm guest returned an out-of-range response: ptr="
+                    + outPtr + " len=" + outLen + ", guest memory is " + memoryBytes + " bytes");
             }
             return memory.readBytes(outPtr, outLen);
         } catch (final ChicoryException e) {

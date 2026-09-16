@@ -41,6 +41,32 @@ class SubprocessSandboxTest {
 
     private static final String RESPONSE = "{\"value\":{\"ok\":true}}";
 
+    @Test
+    void aGuestThatAnswersTwiceNeverHasItsStaleLineServedToTheNextRecord(@TempDir final Path dir)
+        throws IOException {
+        // The dangerous case, and the reason the reader thread claims the outstanding request with
+        // a compare-and-set rather than testing a flag and then queueing. A guest that emits two
+        // lines per request has a spare line in flight; if it were delivered it would answer the
+        // NEXT record -- valid JSON, plausibly correct content, wrong record. That is silent data
+        // corruption, so the channel must refuse to continue instead.
+        final String double_ = "while IFS= read -r line; do printf '%s\\n' '" + RESPONSE
+            + "'; printf '%s\\n' '" + RESPONSE + "'; done\n";
+
+        try (SubprocessSandbox runtime =
+                 new SubprocessSandbox(guest(dir, "answers-twice", double_), 5000)) {
+            // The first call is answered legitimately by the first line.
+            assertThat(runtime.call("{\"v\":1}".getBytes(StandardCharsets.UTF_8)))
+                .asString().contains("ok");
+
+            // The second line is unsolicited. Whether it is noticed before or after the next
+            // request is written, the channel must end up abandoned rather than delivering it.
+            awaitDead(runtime);
+            assertThat(runtime.isAlive()).isFalse();
+            assertThatThrownBy(() -> runtime.call("{\"v\":2}".getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(SandboxException.class);
+        }
+    }
+
     private static List<String> guest(final Path dir, final String name, final String body)
         throws IOException {
         final Path script = dir.resolve(name + ".sh");

@@ -39,7 +39,14 @@ public final class GuestResponse {
         return new GuestResponse(true, null, null, null);
     }
 
-    /** The guest rejected this record. Becomes a DataException, so Connect can route it to a DLQ. */
+    /**
+     * The guest rejected this record; becomes a {@code DataException}.
+     *
+     * <p>What Connect does next depends on the connector. Under the default
+     * {@code errors.tolerance=none} the task fails; under {@code all} the record is skipped. On a
+     * sink task with a dead letter queue configured the record is captured there -- as it arrived,
+     * before this transform ran. Source tasks have no dead letter queue at all.
+     */
     public static GuestResponse error(final String message) {
         return new GuestResponse(false, message, null, null);
     }

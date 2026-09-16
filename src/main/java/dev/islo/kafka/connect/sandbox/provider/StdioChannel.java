@@ -100,9 +100,11 @@ final class StdioChannel implements AutoCloseable {
             Thread.currentThread().interrupt();
             poisoned.set(true);
             throw new SandboxException("Interrupted waiting for the guest", e);
-        } finally {
-            awaitingResponse.set(false);
         }
+        // Deliberately no `awaitingResponse.set(false)` here. The reader thread clears the flag
+        // when it claims the request, so clearing it again from this side would reopen the race
+        // it exists to close. Every path that leaves the flag set also poisons the channel, so it
+        // is never observed stale by a later call.
 
         if (line == null) {
             // A late reply would be mistaken for the answer to the *next* record, so the channel
@@ -146,18 +148,23 @@ final class StdioChannel implements AutoCloseable {
                         log.warn("[sandbox] {}", line);
                         continue;
                     }
-                    if (!awaitingResponse.get()) {
+                    // Claim the outstanding request and hand the line over as one atomic step.
+                    // Testing the flag and then queueing would be check-then-act: a guest that
+                    // answers twice can have its second line pass the test before call() clears
+                    // the flag, and that line is then delivered as the answer to the NEXT record.
+                    // The result is valid JSON, correctly masked, and about a different record --
+                    // silent data corruption rather than a visible failure. The queue holds one
+                    // element, so a failed offer means a line is already waiting, which is the
+                    // same protocol violation seen from the other side.
+                    if (!awaitingResponse.compareAndSet(true, false) || !fromGuest.offer(line)) {
                         log.error("Guest wrote to stdout with no request outstanding; abandoning "
                             + "the channel. Offending line: {}", line);
                         poisoned.set(true);
                         return;
                     }
-                    fromGuest.put(line);
                 }
             } catch (final IOException e) {
                 log.debug("Guest stream {} closed", name, e);
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
             } finally {
                 // Only stdout closing ends the conversation. A guest may close stderr and keep
                 // serving perfectly well.

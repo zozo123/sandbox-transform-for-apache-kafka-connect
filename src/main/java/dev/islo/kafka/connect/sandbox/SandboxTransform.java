@@ -34,11 +34,20 @@ import org.slf4j.LoggerFactory;
 /**
  * Runs user-supplied code against each record inside an isolated {@link Sandbox}.
  *
- * <p>Kafka Connect isolates plugins by classloader only (KIP-146), which separates dependencies
- * but grants every transform the worker's full privileges: an SMT shares a JVM with other
- * connectors and can read their configurations, open sockets, touch the filesystem, or call
- * {@code System.exit}. This transform moves the user's logic behind a real boundary while leaving
- * the rest of Connect untouched.
+ * <p>A custom transform today means writing Java, building a JAR, getting it onto every worker's
+ * {@code plugin.path}, and restarting the workers -- and on a managed Connect service it is not
+ * possible at all. This transform takes the logic as <em>configuration</em> instead: a path to a
+ * WebAssembly module, or an image to run, in the connector config like any other SMT setting. The
+ * guest can be written in any language that compiles to one of those targets.
+ *
+ * <p>An isolation boundary is what makes that shape workable, not a security fix. Kafka's trust
+ * position is unchanged and this plugin does not alter it: transforms execute in the worker JVM
+ * with its privileges, and installing one is an act of trust. That applies to this plugin's own
+ * JAR exactly as it does to any other. What changes is the guest: it runs behind
+ * {@link Sandbox} rather than as more privileged Java on the class path, so taking it as
+ * configuration is a reasonable thing to do rather than a way of handing the worker to whoever
+ * wrote the config. The strength of that boundary is a property of the provider in use, which is
+ * why {@link SandboxCapabilities} is declared per provider rather than claimed once here.
  *
  * <p>Configure it like any other SMT:
  * <pre>

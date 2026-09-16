@@ -91,6 +91,26 @@ final class WasmGuests {
         return write(dir, name, wat);
     }
 
+    /**
+     * Returns a packed (ptr, len) pair the host must reject without acting on it.
+     *
+     * <p>Both halves of the return value are chosen by the guest, so the host cannot size a buffer
+     * from them without checking first: a length near 2^31 would have the worker attempt a 2GB
+     * allocation, and the resulting OutOfMemoryError is an Error rather than a ChicoryException,
+     * so it escapes the trap handling entirely.
+     */
+    static Path returningOutOfRange(final Path dir, final String name,
+                                    final int ptr, final int len) throws IOException {
+        final long packed = ((long) ptr << 32) | (len & 0xFFFFFFFFL);
+        final String wat =
+            "(module\n"
+                + "  (memory (export \"memory\") 1)\n"
+                + "  (func (export \"alloc\") (param $size i32) (result i32) (i32.const 1024))\n"
+                + "  (func (export \"transform\") (param $ptr i32) (param $len i32) (result i64)\n"
+                + "    (i64.const " + packed + ")))\n";
+        return write(dir, name, wat);
+    }
+
     private static Path write(final Path dir, final String name, final String wat)
         throws IOException {
         final Path out = dir.resolve(name + ".wasm");

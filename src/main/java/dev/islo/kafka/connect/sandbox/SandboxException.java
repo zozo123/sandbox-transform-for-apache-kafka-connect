@@ -22,9 +22,16 @@ import org.apache.kafka.connect.errors.ConnectException;
  * Signals that the isolation boundary failed, as opposed to the record being bad.
  *
  * <p>This deliberately extends {@link ConnectException} rather than
- * {@link org.apache.kafka.connect.errors.DataException}: a broken sandbox is a task-level fault
- * that should fail the task, whereas a record the guest rejected is a record-level fault that
- * Connect's existing {@code errors.tolerance} and dead-letter-queue handling should absorb.
+ * {@link org.apache.kafka.connect.errors.DataException}: a broken sandbox is a task-level fault,
+ * whereas a record the guest rejected is a record-level fault that {@code errors.tolerance}
+ * absorbs.
+ *
+ * <p>The distinction is real but Connect does not act on it as cleanly as the two types suggest.
+ * Tolerance is decided by stage rather than by exception type, so {@code errors.tolerance=all}
+ * skips the record for either. The type matters for what a reader of the logs and the DLQ sees,
+ * and for the default {@code errors.tolerance=none}, where both fail the task. See
+ * {@link SandboxTransform} for the full table, including the fact that the dead letter queue
+ * exists for sink tasks only.
  */
 public class SandboxException extends ConnectException {
 

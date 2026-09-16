@@ -155,6 +155,13 @@ distributions {
         contents {
             from jar
             from configurations.runtimeClasspath
+            // The plugin directory is self-contained -- a Connect worker loads it through an
+            // isolated classloader and resolves nothing for it -- so the bundled dependencies
+            // travel with it. ASM is BSD-3-Clause, which requires its copyright notice to be
+            // reproduced in redistributions, so the licence files ship alongside the jars rather
+            // than living only in the repository.
+            from('LICENSE')
+            from('NOTICE')
         }
     }
 }
