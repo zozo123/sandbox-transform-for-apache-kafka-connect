@@ -1,0 +1,150 @@
+/*
+ * Copyright 2026 Yossi Eliaz
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package dev.islo.kafka.connect.sandbox.provider;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import dev.islo.kafka.connect.sandbox.Sandbox;
+import dev.islo.kafka.connect.sandbox.SandboxException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Runs the guest inside a container or a virtual machine, through the Docker Engine API.
+ *
+ * <p>One implementation serves two very different boundaries, because the difference is which
+ * engine it is pointed at rather than how it is driven. Left alone it uses the ambient Docker
+ * socket and the guest gets namespaces and cgroups on the host's kernel. Pointed at a
+ * microVM-backed engine -- Docker Sandboxes exposes one at {@code ~/.sbx/run/d/docker.sock} -- the
+ * guest gets its own kernel and its own scheduler, and {@code --cpus} becomes a hardware vCPU
+ * allocation rather than a share of host time. That is what makes an enforced CPU bound possible,
+ * which is the one guarantee the WebAssembly provider cannot offer.
+ *
+ * <p>It shells out to the {@code docker} binary rather than speaking the Engine API over its unix
+ * socket directly. That keeps the artifact at Java 11, so it still loads on Connect 3.x workers --
+ * {@code SocketChannel} gained unix-domain support only in Java 16 -- and it adds no dependency to
+ * a Connect plugin classloader. Nothing is bundled: whatever {@code docker} is on PATH is used.
+ */
+public class DockerSandbox implements Sandbox {
+
+    private static final Logger log = LoggerFactory.getLogger(DockerSandbox.class);
+    private static final String KEEPALIVE = "tail -f /dev/null";
+
+    private final String dockerHost;
+    private final String name;
+    private final StdioChannel channel;
+
+    public DockerSandbox(final String dockerHost, final String name, final String image,
+                         final String cpus, final String memory,
+                         final List<String> guestCommand, final long timeoutMs) {
+        if (guestCommand == null || guestCommand.isEmpty()) {
+            throw new SandboxException("The docker providers require sandbox.command");
+        }
+        if (image == null || image.isEmpty()) {
+            throw new SandboxException("The docker providers require sandbox.docker.image");
+        }
+        this.dockerHost = dockerHost;
+        this.name = name;
+
+        // The container is kept alive by a no-op so the guest can be started as a long-lived exec
+        // session. One sandbox serves every record for the life of the task.
+        run(Arrays.asList("docker", "run", "-d", "--name", name,
+            "--cpus", cpus, "--memory", memory, "--network", "none",
+            image, "sh", "-c", KEEPALIVE), "start sandbox");
+
+        final List<String> exec = new ArrayList<>(Arrays.asList("docker", "exec", "-i", name));
+        exec.addAll(guestCommand);
+        try {
+            this.channel = new StdioChannel(exec, timeoutMs, environment());
+        } catch (final RuntimeException e) {
+            destroy();
+            throw e;
+        }
+        log.info("Sandbox {} ready ({} cpus, {} memory)", name, cpus, memory);
+    }
+
+    @Override
+    public byte[] call(final byte[] request) {
+        return channel.call(request);
+    }
+
+    @Override
+    public boolean isAlive() {
+        return channel.isAlive();
+    }
+
+    @Override
+    public void close() {
+        channel.close();
+        destroy();
+    }
+
+    private String[] environment() {
+        return dockerHost == null || dockerHost.isEmpty()
+            ? new String[0] : new String[] {"DOCKER_HOST", dockerHost};
+    }
+
+    private void destroy() {
+        try {
+            run(Arrays.asList("docker", "rm", "-f", name), "remove sandbox");
+        } catch (final SandboxException e) {
+            // Never let cleanup mask the original failure, but never leak a sandbox silently.
+            log.warn("Could not remove sandbox {}; it may need removing by hand", name, e);
+        }
+    }
+
+    private void run(final List<String> command, final String what) {
+        try {
+            final ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+            final String[] env = environment();
+            for (int i = 0; i < env.length; i += 2) {
+                builder.environment().put(env[i], env[i + 1]);
+            }
+            final Process process = builder.start();
+            final String output = readAll(process);
+            if (!process.waitFor(180, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new SandboxException("Timed out trying to " + what);
+            }
+            if (process.exitValue() != 0) {
+                throw new SandboxException(
+                    "Could not " + what + " (exit " + process.exitValue() + "): " + output.trim());
+            }
+        } catch (final IOException e) {
+            throw new SandboxException("Could not run docker; is it installed and on PATH?", e);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SandboxException("Interrupted trying to " + what, e);
+        }
+    }
+
+    private static String readAll(final Process process) throws IOException {
+        final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        final byte[] chunk = new byte[4096];
+        int read;
+        while ((read = process.getInputStream().read(chunk)) != -1) {
+            buffer.write(chunk, 0, read);
+        }
+        return new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+}
