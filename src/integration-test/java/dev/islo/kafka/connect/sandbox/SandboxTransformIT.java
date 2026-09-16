@@ -64,8 +64,13 @@ class SandboxTransformIT {
 
     @BeforeEach
     void startWorker() {
+        // Not an assumption. The integrationTest task always sets this, so an absent value means
+        // the build is wired wrong -- and an aborted assumption here would abort the whole class
+        // silently, leaving a green run that started no worker and asserted nothing.
         final String pluginDir = System.getProperty("integration-test.plugin.dir");
-        assumeThat(pluginDir).as("plugin dir system property").isNotNull();
+        assertThat(pluginDir)
+            .as("integration-test.plugin.dir, set by the integrationTest task")
+            .isNotNull();
 
         if (EXTERNAL_BROKER != null && !EXTERNAL_BROKER.isEmpty()) {
             bootstrapServers = EXTERNAL_BROKER;
@@ -92,7 +97,17 @@ class SandboxTransformIT {
     @Test
     void masksCardNumbersInsideARealConnectWorker() throws Exception {
         final String module = System.getProperty("integration-test.wasm.module");
-        assumeThat(new File(module)).as("built rust guest").exists();
+        assertThat(module).as("integration-test.wasm.module").isNotNull();
+
+        // A missing guest is a failure, not a skip -- unless a human explicitly asked to skip by
+        // running with -PallowMissingGuest, which is the escape hatch for a contributor with no
+        // Rust toolchain. The distinction is the whole point: a skip nobody requested is how a
+        // suite reports success while proving nothing.
+        if (Boolean.getBoolean("integration-test.allow-missing-guest")) {
+            assumeThat(new File(module)).as("built rust guest (skip requested)").exists();
+        } else {
+            assertThat(new File(module)).as("built rust guest").exists();
+        }
 
         // A fresh topic per run: the consumer reads from earliest, so a reused broker could
         // otherwise serve records produced by an earlier run and mask a broken transform.

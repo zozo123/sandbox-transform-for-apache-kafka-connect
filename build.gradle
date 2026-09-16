@@ -113,6 +113,29 @@ tasks.register('integrationTest', Test) {
         layout.buildDirectory.dir("install/${project.name}").get().asFile.absolutePath
     systemProperty 'integration-test.wasm.module',
         file('examples/redact-rs/target/wasm32-unknown-unknown/release/redact.wasm').absolutePath
+
+    // Fail rather than skip when the guest has not been built. The integration tests used to
+    // guard themselves with assumeThat(module.exists()), which meant that forgetting the cargo
+    // build -- or breaking it -- produced a green run that had asserted nothing at all. The
+    // whole point of this suite is that it is the only evidence the plugin installs and works,
+    // so its absence has to be louder than its success.
+    doFirst {
+        final wasm = file(
+            'examples/redact-rs/target/wasm32-unknown-unknown/release/redact.wasm')
+        if (!wasm.exists() && !project.hasProperty('allowMissingGuest')) {
+            throw new GradleException(
+                "The Rust guest has not been built, so the integration tests would prove "
+                    + "nothing.\n  Expected: ${wasm}\n"
+                    + "  Build it: cd examples/redact-rs && cargo build --release "
+                    + "--target wasm32-unknown-unknown\n"
+                    + "  Or skip deliberately: ./gradlew integrationTest -PallowMissingGuest")
+        }
+    }
+    // A skip is only ever legitimate when someone asked for one. The tests read this to decide
+    // between aborting (explicitly requested) and failing (the guest is simply not there).
+    systemProperty 'integration-test.allow-missing-guest',
+        project.hasProperty('allowMissingGuest').toString()
+
     // Lets the test run against a broker started outside the build.
     if (project.hasProperty('bootstrapServers')) {
         systemProperty 'integration-test.bootstrap.servers', project.property('bootstrapServers')
