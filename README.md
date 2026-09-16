@@ -145,14 +145,57 @@ Tombstones pass through untouched; dropping them would break compaction downstre
 
 ## Build and verify
 
+Build the example guest first. The integration tests run the *real* compiled guest, so they refuse
+to run without it rather than skipping and reporting a green run that proved nothing:
+
 ```bash
-./gradlew build              # 25 tests, checkstyle
+rustup target add wasm32-unknown-unknown
+cd examples/redact-rs && cargo build --release --target wasm32-unknown-unknown && cd -
+```
+
+```bash
+./gradlew build              # unit tests + checkstyle
 ./gradlew integrationTest    # real Kafka broker + real Connect worker via Testcontainers
 ./gradlew benchmark
 ```
 
+Without a Rust toolchain, `./gradlew integrationTest -PallowMissingGuest` skips the tests that need
+the guest — deliberately, and only because you asked.
+
 `SandboxTransformIT` loads the transform from `plugin.path` through Connect's own plugin
-classloader and runs the real Rust guest against a real broker.
+classloader and runs the real Rust guest against a real broker. `RecordIdentityIT` additionally
+asserts the record's key and headers survive the transform. The worker runs with
+`plugin.discovery=hybrid_fail`, so the suite also proves the `META-INF/services` manifests are
+complete rather than merely that the code works.
+
+### On a machine with no local JDK
+
+Gradle can run in a container, but Testcontainers cannot reach the Docker socket from inside one —
+it is `permission denied` as a non-root user, and on macOS a host unix socket does not cross into a
+container at all. Start a broker yourself and use the external-broker path:
+
+```bash
+docker run -d --name kafka -p 9092:9092 \
+  -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://host.docker.internal:9092 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+  apache/kafka:3.8.1
+
+docker run --rm -v "$PWD":/app -w /app -u "$(id -u):$(id -g)" \
+  -e GRADLE_USER_HOME=/app/.gradle-home \
+  --add-host host.docker.internal:host-gateway \
+  gradle:8.10-jdk17 gradle integrationTest \
+  -PbootstrapServers=host.docker.internal:9092
+```
+
+The advertised listener is the load-bearing part: the worker and the consumer both run inside the
+build container, so the broker has to advertise a name that resolves from there, not `localhost`.
 
 ## Honest limitations
 
@@ -166,7 +209,13 @@ classloader and runs the real Rust guest against a real broker.
 - **`DockerSandboxIT` is skipped** unless a Docker Sandboxes engine socket is reachable. The
   command sequence it issues is verified by hand on the host; the test itself cannot run inside a
   containerised build on macOS, where unix sockets do not cross the VM boundary.
-- Value transforms only — no key or header rewriting, no `Predicate` support yet.
+- **Value transforms only.** The guest reads and replaces the value. The key, key schema, partition,
+  timestamp and headers are carried through unchanged — asserted by `RecordIdentityIT` — but the
+  guest cannot rewrite them.
+- **`Predicate`s work, but are untested here.** Connect applies predicates in `TransformationStage`,
+  which wraps the transform rather than calling into it, so `predicates=`/`negate=` behave for this
+  SMT exactly as for any other. Nothing in this repo exercises that, so it is stated as mechanism,
+  not as a tested guarantee.
 
 ## On upstreaming
 
