@@ -16,9 +16,11 @@
 
 package dev.islo.kafka.connect.sandbox;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -63,8 +65,15 @@ class DockerSandboxIT {
         configs.put("sandbox.docker.image", "python:3.12-slim");
         configs.put("sandbox.docker.cpus", "1");
         configs.put("sandbox.docker.memory", "512m");
-        configs.put("sandbox.command", String.join(",",
-            Arrays.asList("python3", "-u", "-c", GUEST)));
+        // sandbox.command is a Kafka config list, so it splits on every comma and offers no
+        // escape. GUEST is Python -- "import sys,json" alone tears it in two -- so passing it
+        // inline with -c silently launches the interpreter with a dozen fragments as argv.
+        // Base64 has no comma in its alphabet, so the script crosses the config intact.
+        final String encoded = Base64.getEncoder()
+            .encodeToString(GUEST.getBytes(StandardCharsets.UTF_8));
+        configs.put("sandbox.command", String.join(",", Arrays.asList(
+            "sh", "-c",
+            "echo " + encoded + " | base64 -d > /tmp/guest.py && exec python3 -u /tmp/guest.py")));
         configs.put("schemas.enable", false);
         configs.put("sandbox.call.timeout.ms", 30_000L);
 
