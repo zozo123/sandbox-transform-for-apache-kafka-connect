@@ -49,9 +49,26 @@ import org.slf4j.LoggerFactory;
  * </pre>
  *
  * <p>Errors are deliberately split in two so that Connect's existing machinery keeps working. A
- * record the guest rejects raises {@link DataException}, which {@code errors.tolerance} and the
- * dead-letter queue already handle. A broken boundary raises {@link SandboxException}, which
- * fails the task, because silently continuing without isolation would defeat the point.
+ * record the guest rejects raises {@link DataException}; a broken boundary raises
+ * {@link SandboxException}. What Connect then does with either depends on the connector's
+ * {@code errors.tolerance}, and on whether it is a sink or a source:
+ *
+ * <ul>
+ *   <li>With the default {@code errors.tolerance=none}, both fail the task.</li>
+ *   <li>With {@code errors.tolerance=all}, both are tolerated and the record is skipped. Connect
+ *       classifies tolerable exceptions by stage, not by type, so a {@link SandboxException} from
+ *       a broken boundary is swallowed just as a {@link DataException} is. An operator who wants
+ *       bad records skipped but a broken sandbox to stop the task cannot express that through
+ *       {@code errors.tolerance} alone.</li>
+ *   <li>The dead-letter queue applies to <b>sink connectors only</b>. {@code Worker} installs a
+ *       {@code DeadLetterQueueReporter} for sink tasks and only a {@code LogReporter} for source
+ *       tasks, and the {@code errors.deadletterqueue.*} properties are defined on
+ *       {@code SinkConnectorConfig} alone. On a source connector a rejected record is logged and
+ *       dropped, never captured.</li>
+ * </ul>
+ *
+ * <p>Note also that the dead-letter queue records the message as it arrived, before this
+ * transform ran. For a redaction transform that means the DLQ holds the unmasked original.
  *
  * <p>Tombstones pass through untouched: there is no value to transform, and dropping them would
  * break compaction semantics for downstream consumers.

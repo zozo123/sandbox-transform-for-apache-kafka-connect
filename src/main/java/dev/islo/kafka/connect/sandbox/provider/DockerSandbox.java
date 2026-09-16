@@ -49,6 +49,8 @@ public class DockerSandbox implements Sandbox {
 
     private static final Logger log = LoggerFactory.getLogger(DockerSandbox.class);
     private static final String KEEPALIVE = "tail -f /dev/null";
+    /** Budget for one docker lifecycle command; an image pull on a cold host is the slow case. */
+    private static final long TIMEOUT_SECONDS = 180;
 
     private final String dockerHost;
     private final String name;
@@ -121,11 +123,30 @@ public class DockerSandbox implements Sandbox {
                 builder.environment().put(env[i], env[i + 1]);
             }
             final Process process = builder.start();
-            final String output = readAll(process);
-            if (!process.waitFor(180, TimeUnit.SECONDS)) {
+            // Drain on another thread. readAll() returns only at EOF, which for a child process
+            // means at exit, so reading inline here would make the timeout below unreachable:
+            // a docker command that hangs -- a stale or unresponsive engine socket is the usual
+            // cause -- would block the task thread for ever instead of failing after 180s.
+            final StringBuilder collected = new StringBuilder();
+            final Thread drain = new Thread(() -> {
+                try {
+                    collected.append(readAll(process));
+                } catch (final IOException e) {
+                    // The process was killed below; whatever it had already written is enough.
+                }
+            }, "sandbox-docker-drain");
+            drain.setDaemon(true);
+            drain.start();
+
+            if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                throw new SandboxException("Timed out trying to " + what);
+                throw new SandboxException("Timed out after " + TIMEOUT_SECONDS
+                    + "s trying to " + what);
             }
+            // The child has exited, so EOF is imminent; bound the wait anyway rather than trade
+            // one unbounded wait for another.
+            drain.join(TimeUnit.SECONDS.toMillis(5));
+            final String output = collected.toString();
             if (process.exitValue() != 0) {
                 throw new SandboxException(
                     "Could not " + what + " (exit " + process.exitValue() + "): " + output.trim());

@@ -49,7 +49,7 @@ the transform above them is identical.
 |---|---|---|---|---|
 | boundary | WebAssembly in the worker JVM | own kernel, own scheduler | namespaces + cgroups | a child process |
 | bounds memory | yes | yes | yes | **no** |
-| blocks syscalls | yes | yes | yes | **no** |
+| blocks syscalls | yes | yes | **partly** | **no** |
 | **bounds CPU** | **no** | **yes** | yes | **no** |
 | cost / record | **5.75 µs** | ~120–370 µs | ~370 µs | 68 µs |
 | deploys as | a plain JAR, anywhere | needs a Docker engine | needs a Docker socket | anywhere |
@@ -125,10 +125,21 @@ regression test for it.
 
 ## Errors
 
-| situation | exception | effect |
-|---|---|---|
-| guest returns `{"error":…}` | `DataException` | record-level — `errors.tolerance` and the DLQ handle it |
-| guest traps, or the boundary breaks | `SandboxException` | task-level — fails rather than running unisolated |
+| situation | exception | effect with `errors.tolerance=none` (default) | with `errors.tolerance=all` |
+|---|---|---|---|
+| guest returns `{"error":…}` | `DataException` | task fails | record skipped |
+| guest traps, or the boundary breaks | `SandboxException` | task fails | record skipped — see below |
+
+Connect decides what is tolerable by *stage*, not by exception type, so `errors.tolerance=all`
+swallows a `SandboxException` from a broken boundary exactly as it swallows a `DataException` from
+a rejected record. There is no setting that skips bad records but stops the task when the sandbox
+itself breaks; if that distinction matters, run with `errors.tolerance=none` and let the task fail.
+
+**The dead letter queue is sink-only.** Connect installs a `DeadLetterQueueReporter` for sink tasks
+and only a `LogReporter` for source tasks, and the `errors.deadletterqueue.*` properties are defined
+on `SinkConnectorConfig` alone. On a source connector a rejected record is logged and dropped.
+Note also that the DLQ stores the message *as it arrived*, before this transform ran — so for a
+redaction transform the DLQ holds the unmasked original.
 
 Tombstones pass through untouched; dropping them would break compaction downstream.
 

@@ -58,10 +58,24 @@ public abstract class DockerSandboxProvider implements SandboxProvider {
             return "container";
         }
 
+        /**
+         * Memory and CPU are bounded by cgroups, but syscalls are not blocked.
+         *
+         * <p>A container shares the host kernel and reaches it through the ordinary syscall
+         * interface. Docker's default seccomp profile denies a few dozen of the several hundred
+         * syscalls available, which narrows the attack surface without closing it: the guest still
+         * opens files, sockets and processes inside its namespaces. That is categorically weaker
+         * than the wasm provider, where no host import is supplied at all and there is no syscall
+         * to make, and weaker than a virtual machine with its own kernel.
+         *
+         * <p>Declaring {@code blocksSyscalls=true} here would make this provider look equivalent
+         * to those two in {@link SandboxCapabilities}, which is exactly the comparison an operator
+         * uses to choose one. It is false, so it is not declared.
+         */
         @Override
         public SandboxCapabilities capabilities() {
             return new SandboxCapabilities(
-                SandboxCapabilities.Isolation.CONTAINER, true, true, true);
+                SandboxCapabilities.Isolation.CONTAINER, true, true, false);
         }
 
         @Override

@@ -39,12 +39,21 @@ public class SandboxTransformConfig extends AbstractConfig {
 
     public static final String COMMAND_CONFIG = "sandbox.command";
     private static final String COMMAND_DOC =
-        "Command and arguments to launch. Required by the \"subprocess\" runtime.";
+        "Command and arguments to launch. Required by the \"subprocess\", \"container\" and "
+            + "\"microvm\" runtimes. Parsed as a Kafka config list, which splits on every comma "
+            + "and offers no escape, so an argument that itself contains a comma cannot be "
+            + "expressed here -- an inline script passed with -c is the usual way to trip over "
+            + "this. Put the guest in a file, or a container image, and name it instead.";
 
     public static final String CALL_TIMEOUT_MS_CONFIG = "sandbox.call.timeout.ms";
     private static final String CALL_TIMEOUT_MS_DOC =
         "Maximum time to wait for the guest to transform a single record. Exceeding it fails the "
-            + "task rather than stalling it indefinitely.";
+            + "task rather than stalling it indefinitely. Honoured only by the out-of-process "
+            + "runtimes (\"subprocess\", \"container\", \"microvm\"), which can abandon a guest "
+            + "that stops answering. The in-process \"wasm\" runtime ignores it: a wasm guest runs "
+            + "on the calling task thread, and a Java thread cannot be safely killed, so there is "
+            + "nothing to time out against. Bounding a guest's CPU requires a process or VM "
+            + "boundary -- which is why the runtime is pluggable.";
 
     public static final String SCHEMAS_ENABLE_CONFIG = "schemas.enable";
     private static final String SCHEMAS_ENABLE_DOC =

@@ -118,18 +118,20 @@ public class WasmSandbox implements Sandbox {
                 builder.withMachineFactory(MachineFactoryCompiler.compile(module));
             }
             this.instance = builder.build();
-            this.alloc = instance.export(ALLOC_EXPORT);
-            this.transform = instance.export(TRANSFORM_EXPORT);
+            // Resolve the required exports separately from loading the module. Chicory throws
+            // for a missing export, so doing this inside the catch below would report a guest
+            // built against the wrong ABI as "could not load module" -- true, but it buries the
+            // one detail the guest author needs, which is which exports were expected.
+            this.alloc = requiredExport(instance, ALLOC_EXPORT);
+            this.transform = requiredExport(instance, TRANSFORM_EXPORT);
             this.reset = optionalExport(instance, RESET_EXPORT);
             this.memory = instance.memory();
         } catch (final ChicoryException e) {
             throw new SandboxException("Could not load wasm module " + modulePath + ": "
                 + e.getMessage(), e);
         }
-        if (alloc == null || transform == null || memory == null) {
-            throw new SandboxException(
-                "Wasm module must export \"memory\", \"" + ALLOC_EXPORT + "\" and \""
-                    + TRANSFORM_EXPORT + "\"");
+        if (memory == null) {
+            throw new SandboxException(abiMessage());
         }
     }
 
@@ -175,6 +177,25 @@ public class WasmSandbox implements Sandbox {
         // become garbage once this runtime is unreachable. There is no process or VM to reap,
         // which is precisely the appeal of an in-process boundary.
         closed.set(true);
+    }
+
+    private static String abiMessage() {
+        return "Wasm module must export \"memory\", \"" + ALLOC_EXPORT + "\" and \""
+            + TRANSFORM_EXPORT + "\"";
+    }
+
+    /** Throws {@link SandboxException}, not {@link ChicoryException}, so the ABI message survives. */
+    private static ExportFunction requiredExport(final Instance target, final String name) {
+        final ExportFunction export;
+        try {
+            export = target.export(name);
+        } catch (final ChicoryException e) {
+            throw new SandboxException(abiMessage() + " (no \"" + name + "\" export found)", e);
+        }
+        if (export == null) {
+            throw new SandboxException(abiMessage() + " (no \"" + name + "\" export found)");
+        }
+        return export;
     }
 
     private static ExportFunction optionalExport(final Instance target, final String name) {
