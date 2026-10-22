@@ -1,0 +1,5 @@
+# The worker runs with plugin.discovery=hybrid_fail so that this suite proves the shipped
+# plugin's own manifests are complete. That check applies to every plugin the worker can see,
+# including this test fixture, which lives on the classpath rather than in plugin.path -- so it
+# needs a manifest of its own or the worker refuses to start.
+dev.islo.kafka.connect.sandbox.PaymentsSourceConnector

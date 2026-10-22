@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Built before the Java tests so RustGuestIT exercises the real guest
+      # instead of skipping. This is the step that caught the memory-limits bug.
+      - name: Build the Rust example guest
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release --target wasm32-unknown-unknown
+        working-directory: examples/redact-rs
+
+      - name: Build, lint and test
+        run: ./gradlew build --no-daemon
+
+      - name: Integration test against a real Kafka broker and Connect worker
+        run: ./gradlew integrationTest --no-daemon
+
+      - name: Benchmark the sandbox boundary
+        run: ./gradlew benchmark --no-daemon
