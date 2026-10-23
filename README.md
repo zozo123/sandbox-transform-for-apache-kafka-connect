@@ -3,6 +3,10 @@
 > Run a Kafka Connect transform's code inside a **sandbox** — behind a pluggable provider
 > interface. WebAssembly and Docker Sandboxes ship as the two worked examples.
 
+Status: experimental · by [Yossi Eliaz](https://yossieliaz.netlify.app/) · Apache-2.0 · not part
+of Apache Kafka. The Java package lives under `dev.islo`, the reversed domain of islo.dev
+(Incredibuild), where the author works.
+
 A custom single-message transform today means writing Java, building a JAR, getting it onto every
 worker's `plugin.path`, and restarting the workers. This makes the transform's logic a *sandboxed
 guest* instead: supplied as configuration, written in any language, running behind a boundary.
@@ -32,8 +36,10 @@ way of handing the worker to whoever wrote the config. The strength of that boun
 of the provider you choose, declared per provider in `SandboxCapabilities` rather than claimed once
 for the project.
 
-The prior art is Redpanda, which ships WebAssembly data transforms for brokers. Wasm is what a
-managed service can accept from a customer. Kafka Connect has no equivalent.
+The prior art is Redpanda, which ships
+[WebAssembly data transforms](https://docs.redpanda.com/streaming/current/develop/data-transforms/)
+for brokers. Wasm is what a managed service can accept from a customer. Kafka Connect has no
+equivalent.
 
 ## The abstraction is the point
 
@@ -221,10 +227,12 @@ build container, so the broker has to advertise a name that resolves from there,
 ## Honest limitations
 
 - **`wasm` cannot bound CPU.** A guest looping forever holds the task thread, and a Java thread
-  cannot be safely killed. Chicory's only hook is interpreter-only and experimental. `sbx` is the
-  only provider here that can cap a runaway guest, because the VM has its own scheduler — but it
-  has not been tested against an adversarial guest, and nothing here should be read as a
-  recommendation for running code you have reason to distrust.
+  cannot be safely killed. The only hook in [Chicory](https://github.com/dylibso/chicory) (the
+  JVM-native WebAssembly runtime the `wasm` provider uses) is interpreter-only and experimental.
+  A runaway guest can be capped only by the Docker providers: `microvm` (Docker Sandboxes'
+  microVM engine) because the VM has its own scheduler, and `container` through cgroup limits on
+  the host kernel. Neither has been tested against an adversarial guest, and nothing here should be
+  read as a recommendation for running code you have reason to distrust.
 - **The Docker providers need an engine.** They shell out to `docker`, so the worker must be able
   to reach a Docker socket — which containerised Connect deployments will not grant. They are
   development and evaluation providers. `container` *could* run on a GitHub-hosted runner (the
